@@ -51,15 +51,23 @@ if st.button("Ver cómo me queda 😎"):
                     contents=[instruccion, img_user, img_prenda]
                 )
                 
-                # Entrega final
+                # --- REEMPLAZÁ DESDE AQUÍ HASTA EL FINAL ---
+                # Entrega final con corrección de rotación automática
                 for part in resultado.candidates[0].content.parts:
                     if part.inline_data:
-                        st.image(PIL.Image.open(io.BytesIO(part.inline_data.data)))
-                        st.balloons() # ¡Efecto de globos para celebrar!
+                        from PIL import ImageOps # Importamos el corrector de orientación
+                        
+                        # Procesamos la imagen para que respete la verticalidad del celular
+                        img_cruda = PIL.Image.open(io.BytesIO(part.inline_data.data))
+                        final_img = ImageOps.exif_transpose(img_cruda) 
+                        
+                        # Mostramos la imagen ocupando el ancho del celular
+                        st.image(final_img, use_container_width=True)
+                        st.balloons()
                 
                 st.success(f"🔥 ¡Esa {nombre_obj} te queda espectacular!")
                         
-        except Exception:
-            st.error("No pudimos leer este producto. Probá con otro link.")
+        except Exception as e:
+            st.error("No pudimos procesar este link. Probá con otro producto.")
 
 st.caption("Nota: Representación por IA con fines ilustrativos.")
