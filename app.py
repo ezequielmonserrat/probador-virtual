@@ -51,23 +51,24 @@ if st.button("Ver cómo me queda 😎"):
                     contents=[instruccion, img_user, img_prenda]
                 )
                 
-                # --- REEMPLAZÁ DESDE AQUÍ HASTA EL FINAL ---
-                # Entrega final con corrección de rotación automática
+               # --- VERSIÓN REFORZADA CONTRA GIRO ---
                 for part in resultado.candidates[0].content.parts:
                     if part.inline_data:
-                        from PIL import ImageOps # Importamos el corrector de orientación
+                        from PIL import ImageOps
                         
-                        # Procesamos la imagen para que respete la verticalidad del celular
+                        # 1. Abrimos la imagen
                         img_cruda = PIL.Image.open(io.BytesIO(part.inline_data.data))
-                        final_img = ImageOps.exif_transpose(img_cruda) 
                         
-                        # Mostramos la imagen ocupando el ancho del celular
+                        # 2. Corregimos según metadatos (EXIF)
+                        final_img = ImageOps.exif_transpose(img_cruda)
+                        
+                        # 3. Lógica de Seguridad: Si sigue horizontal, la rotamos a la fuerza
+                        width, height = final_img.size
+                        if width > height:
+                            final_img = final_img.rotate(-90, expand=True)
+                        
+                        # 4. Mostramos la imagen ocupando el ancho completo
                         st.image(final_img, use_container_width=True)
                         st.balloons()
                 
                 st.success(f"🔥 ¡Esa {nombre_obj} te queda espectacular!")
-                        
-        except Exception as e:
-            st.error("No pudimos procesar este link. Probá con otro producto.")
-
-st.caption("Nota: Representación por IA con fines ilustrativos.")
