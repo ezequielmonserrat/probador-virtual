@@ -6,7 +6,7 @@ import PIL.ImageOps
 import io
 from google import genai
 
-# 1. Configuración de página y Estética
+# 1. Configuración de página y Estética Solo Deportes
 st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
 
 st.markdown("""
@@ -33,31 +33,33 @@ if 'historial' not in st.session_state:
     st.session_state.historial = []
 
 # 3. Interfaz de Usuario
-url_producto = st.text_input("1. Link del producto:")
-foto_usuario = st.file_uploader("2. Tu foto (Vertical) 📸", type=['jpg', 'png', 'jpeg'])
+url_producto = st.text_input("1. Link del producto de la tienda:")
+foto_usuario = st.file_uploader("2. Subí tu foto (Vertical) 📸", type=['jpg', 'png', 'jpeg'])
 
-if st.button("GENERAR PRUEBA"):
+if st.button("GENERAR PRUEBA FIEL"):
     if url_producto and foto_usuario:
         try:
-            with st.spinner("🪄 Manteniendo orientación original..."):
+            with st.spinner("🪄 Corrigiendo postura y generando..."):
                 # Scraping de prenda
                 res = requests.get(url_producto, headers={'User-Agent': 'Mozilla/5.0'})
                 soup = BeautifulSoup(res.text, 'html.parser')
                 img_src = soup.find("meta", property="og:image")['content']
                 img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_src).content))
                 
-                # --- PROCESO DE ORIENTACIÓN ESTRICTA ---
+                # --- PROCESO DE ORIENTACIÓN ---
                 img_user_raw = PIL.Image.open(foto_usuario)
+                # Normalizamos la foto según sus metadatos de rotación
                 img_user = PIL.ImageOps.exif_transpose(img_user_raw)
-                ancho_orig, alto_orig = img_user.size # Registramos la verticalidad real
-                
-                # IA: Instrucción de "Anclaje de Sujeto"
-                # Le decimos explícitamente que la parte de arriba de la foto es la cabeza.
+                ancho_orig, alto_orig = img_user.size 
+                es_vertical = alto_orig > ancho_orig
+
+                # IA: Instrucción con anclaje visual
                 prompt = (
-                    f"Virtual Try-On. Imagen 1: Sujeto vertical. Imagen 2: Prenda. "
-                    f"REGLA INVIOLABLE: No rotes el contenido. La cabeza del sujeto debe permanecer en la parte superior. "
-                    f"El horizonte de la foto debe mantenerse igual que en la Imagen 1. "
-                    f"Genera el resultado en formato vertical de {ancho_orig}x{alto_orig}."
+                    "Virtual Try-On de alta fidelidad. "
+                    "Imagen 1: Persona (Sujeto principal). Imagen 2: Prenda de la tienda. "
+                    "REGLA DE ORO: Mantén la orientación exacta de la Imagen 1. "
+                    "Si el sujeto está de pie, el resultado debe estar de pie. "
+                    "No rotes la imagen. No cambies el horizonte."
                 )
                 
                 resultado = client.models.generate_content(
@@ -65,17 +67,20 @@ if st.button("GENERAR PRUEBA"):
                     contents=[prompt, img_user, img_prenda]
                 )
                 
-                # --- VALIDACIÓN Y CORRECCIÓN DE PÍXELES ---
+                # --- FIX DE PÍXELES POST-GENERACIÓN ---
                 for part in resultado.candidates[0].content.parts:
                     if part.inline_data:
+                        # Cargamos lo que la IA escupió
                         temp_img = PIL.Image.open(io.BytesIO(part.inline_data.data))
                         
-                        # Si la IA devolvió el contenido "acostado"
-                        if temp_img.width > temp_img.height and alto_orig > ancho_orig:
-                            # Giramos la imagen 90 grados para que el sujeto vuelva a estar de pie
+                        # CHEQUEO MATEMÁTICO:
+                        # Si tu foto era vertical pero la IA entregó algo horizontal...
+                        if es_vertical and (temp_img.width > temp_img.height):
+                            # ...la rotamos 90 grados para recuperar la posición correcta
                             temp_img = temp_img.rotate(90, expand=True)
                         
-                        # Forzamos a que el lienzo final sea un clon del original
+                        # PASO FINAL: Forzamos el redimensionamiento al tamaño original
+                        # Esto recupera las partes que la IA recortó al intentar hacerla horizontal.
                         final_res = temp_img.resize((ancho_orig, alto_orig), PIL.Image.Resampling.LANCZOS)
                         
                         st.image(final_res, use_container_width=True)
@@ -83,7 +88,7 @@ if st.button("GENERAR PRUEBA"):
                         st.balloons()
                         
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error técnico: {e}")
 
 # Historial
 if st.session_state.historial:
