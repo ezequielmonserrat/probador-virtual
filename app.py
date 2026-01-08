@@ -39,23 +39,25 @@ foto_usuario = st.file_uploader("2. Tu foto (Vertical) 📸", type=['jpg', 'png'
 if st.button("GENERAR PRUEBA"):
     if url_producto and foto_usuario:
         try:
-            with st.spinner("🪄 Corrigiendo orientación y generando..."):
+            with st.spinner("🪄 Manteniendo orientación original..."):
                 # Scraping de prenda
                 res = requests.get(url_producto, headers={'User-Agent': 'Mozilla/5.0'})
                 soup = BeautifulSoup(res.text, 'html.parser')
                 img_src = soup.find("meta", property="og:image")['content']
                 img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_src).content))
                 
-                # --- PROCESO CRÍTICO DE ORIENTACIÓN ---
+                # --- PROCESO DE ORIENTACIÓN ESTRICTA ---
                 img_user_raw = PIL.Image.open(foto_usuario)
                 img_user = PIL.ImageOps.exif_transpose(img_user_raw)
-                ancho_f, alto_f = img_user.size # Medidas reales de tu foto vertical
+                ancho_orig, alto_orig = img_user.size # Registramos la verticalidad real
                 
-                # IA: Instrucción con restricción de píxeles
+                # IA: Instrucción de "Anclaje de Sujeto"
+                # Le decimos explícitamente que la parte de arriba de la foto es la cabeza.
                 prompt = (
-                    f"Virtual Try-On. Imagen 1: Usuario. Imagen 2: Prenda. "
-                    f"Mantén la relación de aspecto vertical de {ancho_f}x{alto_f}. "
-                    f"No rotes la imagen. No recortes al sujeto. El fondo debe ser el mismo."
+                    f"Virtual Try-On. Imagen 1: Sujeto vertical. Imagen 2: Prenda. "
+                    f"REGLA INVIOLABLE: No rotes el contenido. La cabeza del sujeto debe permanecer en la parte superior. "
+                    f"El horizonte de la foto debe mantenerse igual que en la Imagen 1. "
+                    f"Genera el resultado en formato vertical de {ancho_orig}x{alto_orig}."
                 )
                 
                 resultado = client.models.generate_content(
@@ -63,18 +65,18 @@ if st.button("GENERAR PRUEBA"):
                     contents=[prompt, img_user, img_prenda]
                 )
                 
-                # --- FIX DE ROTACIÓN POST-GENERACIÓN ---
+                # --- VALIDACIÓN Y CORRECCIÓN DE PÍXELES ---
                 for part in resultado.candidates[0].content.parts:
                     if part.inline_data:
                         temp_img = PIL.Image.open(io.BytesIO(part.inline_data.data))
                         
-                        # PASO 1: Detectar si la IA la giró (si el resultado es ancho y la original era alta)
-                        if temp_img.width > temp_img.height and alto_f > ancho_f:
-                            # Rotamos 90 grados a la izquierda para recuperar la verticalidad
+                        # Si la IA devolvió el contenido "acostado"
+                        if temp_img.width > temp_img.height and alto_orig > ancho_orig:
+                            # Giramos la imagen 90 grados para que el sujeto vuelva a estar de pie
                             temp_img = temp_img.rotate(90, expand=True)
                         
-                        # PASO 2: Forzar el tamaño exacto para recuperar lo que la IA recortó
-                        final_res = temp_img.resize((ancho_f, alto_f), PIL.Image.Resampling.LANCZOS)
+                        # Forzamos a que el lienzo final sea un clon del original
+                        final_res = temp_img.resize((ancho_orig, alto_orig), PIL.Image.Resampling.LANCZOS)
                         
                         st.image(final_res, use_container_width=True)
                         st.session_state.historial.append(final_res)
@@ -90,3 +92,4 @@ if st.session_state.historial:
     cols = st.columns(3)
     for idx, img in enumerate(reversed(st.session_state.historial[-3:])):
         cols[idx % 3].image(img, use_container_width=True)
+
