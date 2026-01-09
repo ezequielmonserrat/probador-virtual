@@ -6,15 +6,16 @@ import PIL.ImageOps
 import io
 from google import genai
 
-# 1. Recuperamos la estética de Solo Deportes
+# 1. Recuperamos la interfaz exacta de Solo Deportes
 st.set_page_config(page_title="Probador Virtual | Solo Deportes", layout="centered")
 
 st.markdown("""
     <style>
+    header, #MainMenu, footer {visibility: hidden;}
     .stApp { background-color: #FFFFFF; }
     div.stButton > button:first-child {
         background-color: #0082C9; color: white; border: none; 
-        width: 100%; font-weight: bold; height: 3.5em;
+        width: 100%; font-weight: bold; height: 3.5em; border-radius: 5px;
     }
     div.stButton > button:first-child:hover { background-color: #E30052; }
     </style>
@@ -25,55 +26,53 @@ st.markdown("<h1 style='text-align: center; color: #0082C9;'>👕 PROBADOR VIRTU
 try:
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception:
-    st.error("Error en la conexión con Gemini.")
+    st.error("Error: Revisa la API KEY en Secrets.")
     st.stop()
 
-url_producto = st.text_input("Link del producto de la tienda:")
-foto_usuario = st.file_uploader("Subí tu foto (4:5 recomendado) 📸", type=['jpg', 'png', 'jpeg'])
+# 2. Entradas originales
+url_producto = st.text_input("Link del producto:")
+foto_usuario = st.file_uploader("Subí tu foto para probar 📸", type=['jpg', 'png', 'jpeg'])
 
 if st.button("VER CÓMO ME QUEDA 😎"):
     if url_producto and foto_usuario:
         try:
-            with st.spinner("Manteniendo orientación original..."):
-                # Scraping directo
+            with st.spinner("Procesando con alineación forzada..."):
+                # Scraping de prenda
                 res = requests.get(url_producto, headers={'User-Agent': 'Mozilla/5.0'})
                 soup = BeautifulSoup(res.text, 'html.parser')
-                img_url = soup.find("meta", property="og:image")['content']
-                img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_url).content))
+                img_tag = soup.find("meta", property="og:image") or soup.find("img")
+                img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_tag['content']).content))
                 
-                # --- PASO CLAVE: FIJAR EL LIENZO ---
-                # Cargamos la foto y eliminamos cualquier rotación fantasma de los sensores del celular
+                # --- CAMINO DIFERENTE: PRE-ROTACIÓN ---
                 u_img = PIL.ImageOps.exif_transpose(PIL.Image.open(foto_usuario))
-                ancho, alto = u_img.size
+                
+                # Si la foto es vertical (4:5), la mandamos rotada 90° para compensar el error de la IA
+                if u_img.height > u_img.width:
+                    u_img_input = u_img.rotate(90, expand=True)
+                else:
+                    u_img_input = u_img
 
-                # Prompt de 'Contención Espacial'
-                # Le damos las coordenadas de importancia para que no gire la foto.
-                prompt = (
-                    f"Mantén estrictamente el formato vertical {ancho}x{alto}. "
-                    "Viste al sujeto de la Imagen 1 con la ropa de la Imagen 2. "
-                    "PROHIBIDO: No gires la cámara, no cambies el horizonte. "
-                    "La cabeza debe quedar en el eje superior siempre."
-                )
+                # Prompt simplificado sin órdenes de rotación (dejamos que la IA actúe)
+                prompt = "Viste a la persona con la prenda de la Imagen 2. Mantén diseño y logos."
                 
                 resultado = client.models.generate_content(
                     model='gemini-2.5-flash-image',
-                    contents=[prompt, u_img, img_prenda]
+                    contents=[prompt, u_img_input, img_prenda]
                 )
                 
-                # --- VALIDACIÓN DE SALIDA SIN DEFORMACIÓN ---
                 for part in resultado.candidates[0].content.parts:
                     if part.inline_data:
                         final = PIL.Image.open(io.BytesIO(part.inline_data.data))
                         
-                        # Si la IA la rotó por error (la puso horizontal), la regresamos
-                        if final.width > final.height and alto > ancho:
-                            final = final.transpose(PIL.Image.ROTATE_270)
+                        # Si el resultado es horizontal pero debería ser vertical, lo enderezamos
+                        if final.width > final.height and u_img.height > u_img.width:
+                            final = final.rotate(-90, expand=True)
                         
-                        # Ajuste final al molde original de tu foto
-                        final = final.resize((ancho, alto), PIL.Image.Resampling.LANCZOS)
+                        # Ajuste final de píxeles al tamaño original para asegurar 4:5 perfecto
+                        final = final.resize(u_img.size, PIL.Image.Resampling.LANCZOS)
                         
                         st.image(final, use_container_width=True)
-                        st.success("Resultado en posición correcta.")
+                        st.success("¡Logrado! Orientación y aspecto preservados.")
                         
         except Exception as e:
-            st.error(f"Error técnico: {e}")
+            st.error(f"Error: {e}")
