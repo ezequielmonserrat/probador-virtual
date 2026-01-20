@@ -4,19 +4,22 @@ from bs4 import BeautifulSoup
 import PIL.Image
 import PIL.ImageOps
 import io
-import google.generativeai as genai # Usamos el motor principal
+from google import genai
+from google.genai import types
 
 # --- 1. CONFIGURACIÓN VISUAL ---
 st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
 st.markdown("<style>.stApp { background-color: #0E1117; color: white; }</style>", unsafe_allow_html=True)
 st.title("👕 Probador Virtual Pro")
 
-# --- 2. CONEXIÓN SEGURA ---
+# --- 2. CONEXIÓN (Secrets de Streamlit) ---
 if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    api_key = st.secrets["GEMINI_API_KEY"]
 else:
-    st.error("Falta la clave API en Secrets.")
+    st.error("Configurá GEMINI_API_KEY en los Secrets de Streamlit.")
     st.stop()
+
+client = genai.Client(api_key=api_key)
 
 # --- 3. FUNCIONES ---
 def preparar_foto(archivo):
@@ -42,10 +45,10 @@ with col1:
     metodo = st.radio("Origen:", ["Subir Manual", "Link Solo Deportes"])
     img_prenda = None
     if metodo == "Link Solo Deportes":
-        url = st.text_input("Link:")
+        url = st.text_input("Link de la prenda:")
         if url: img_prenda = scrap_solo_deportes(url)
     else:
-        f = st.file_uploader("Prenda", type=['jpg', 'png', 'jpeg'])
+        f = st.file_uploader("Foto de prenda", type=['jpg', 'png', 'jpeg'])
         if f: img_prenda = preparar_foto(f)
     if img_prenda: st.image(img_prenda, width=150)
 
@@ -57,46 +60,48 @@ with col2:
         img_usuario = preparar_foto(f_u)
         st.image(img_usuario, width=150)
 
-# --- 5. GENERACIÓN CON FILTROS DESACTIVADOS ---
+# --- 5. GENERACIÓN ---
 st.divider()
-if st.button("🚀 GENERAR PRUEBA AHORA"):
+if st.button("🚀 GENERAR RESULTADO FINAL"):
     if not img_prenda or not img_usuario:
-        st.error("Cargá ambas fotos.")
+        st.error("Cargá ambas fotos primero.")
     else:
-        with st.spinner("Cambiando prenda..."):
+        with st.spinner("La IA está creando tu imagen..."):
             try:
-                # Configuramos el modelo para que IGNORE los filtros de seguridad
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                
+                # Prompt directo y potente
+                prompt = (
+                    "PHOTOREALISTIC VIRTUAL TRY-ON. Replace the person's shirt in the first image "
+                    "with the exact garment from the second image. Keep the face, background, "
+                    "and body pose identical. Ensure the new shirt fits the person naturally."
+                )
+
+                # CONFIGURACIÓN DE SEGURIDAD PARA GEMINI 2.0 (Evita bloqueos de logos)
                 safety_settings = [
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                    types.SafetySetting(category="HATE_SPEECH", threshold="OFF"),
+                    types.SafetySetting(category="HARASSMENT", threshold="OFF"),
+                    types.SafetySetting(category="SEXUALLY_EXPLICIT", threshold="OFF"),
+                    types.SafetySetting(category="DANGEROUS_CONTENT", threshold="OFF"),
                 ]
 
-                prompt = (
-                    "Photo-realistic clothing swap. "
-                    "Take the garment from the second image and put it on the person in the first image. "
-                    "Keep the face, pose, and background exactly the same. Fit the shirt to the body shape."
-                )
-                
-                response = model.generate_content(
-                    [prompt, img_usuario, img_prenda],
-                    safety_settings=safety_settings
+                # Llamada al modelo estable
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=[prompt, img_usuario, img_prenda],
+                    config=types.GenerateContentConfig(
+                        safety_settings=safety_settings
+                    )
                 )
 
-                # Si la IA funcionó, nos devuelve la imagen en el primer 'part'
-                if response.candidates:
-                    # Intentamos buscar si hay una imagen en la respuesta
-                    # (Nota: Algunos modelos devuelven la imagen directamente)
-                    st.success("¡Imagen generada!")
-                    # Mostramos el resultado (el modelo 1.5 a veces requiere un manejo distinto de bytes)
-                    try:
-                        st.write(response.text) # Si es texto con descripción
-                    except:
-                        st.image(response.candidates[0].content.parts[0].inline_data.data)
+                # Procesamiento de la imagen resultante
+                if response.candidates and response.candidates[0].content.parts:
+                    for part in response.candidates[0].content.parts:
+                        if part.inline_data:
+                            resultado = PIL.Image.open(io.BytesIO(part.inline_data.data))
+                            st.success("¡Imagen generada con éxito!")
+                            st.image(resultado, use_container_width=True)
+                            st.stop()
                 
+                st.error("La IA no pudo procesar esta prenda específica. Intentá con una foto más clara.")
+
             except Exception as e:
-                st.error(f"Error de la IA: {str(e)}")
-                st.info("Si el error persiste, probá con una prenda que no tenga logos de marcas famosas.")
+                st.error(f"Error técnico: {str(e)}")
