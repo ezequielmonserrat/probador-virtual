@@ -7,7 +7,7 @@ import io
 from google import genai
 from google.genai import types
 
-# --- 1. CONFIGURACIÓN VISUAL ---
+# --- CONFIGURACIÓN VISUAL ---
 st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
 
 st.markdown("""
@@ -23,17 +23,17 @@ st.markdown("""
 
 st.title("👕 Probador Virtual Pro")
 
-# --- 2. CONFIGURACIÓN DE API SEGURA ---
+# --- CONEXIÓN CON LA API ---
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
-    st.error("⚠️ Falta la clave GEMINI_API_KEY en los Secrets de Streamlit.")
+    st.error("Falta la clave GEMINI_API_KEY en Secrets.")
     st.stop()
 
 client = genai.Client(api_key=api_key)
 
-# --- 3. FUNCIONES ---
-def preparar_imagen(archivo):
+# --- FUNCIONES ---
+def preparar_foto(archivo):
     img = PIL.Image.open(archivo)
     return PIL.ImageOps.exif_transpose(img)
 
@@ -50,12 +50,12 @@ def scrap_solo_deportes(url):
         return None
     return None
 
-# --- 4. INTERFAZ ---
+# --- INTERFAZ ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. La Prenda")
-    metodo = st.radio("Origen:", ["Link Solo Deportes", "Subir Foto Manual"])
+    metodo = st.radio("Origen:", ["Subir Foto Manual", "Link Solo Deportes"])
     img_prenda = None
     if metodo == "Link Solo Deportes":
         url = st.text_input("Pegá el link aquí:")
@@ -64,63 +64,55 @@ with col1:
     else:
         f_prenda = st.file_uploader("Foto de la prenda", type=['jpg', 'jpeg', 'png'])
         if f_prenda:
-            img_prenda = preparar_imagen(f_prenda)
-    
+            img_prenda = preparar_foto(f_prenda)
     if img_prenda:
         st.image(img_prenda, width=150)
 
 with col2:
     st.subheader("2. Tu Foto")
-    f_user = st.file_uploader("Tu foto (de frente)", type=['jpg', 'jpeg', 'png'])
+    f_user = st.file_uploader("Tu foto", type=['jpg', 'jpeg', 'png'])
     img_usuario = None
     if f_user:
-        img_usuario = preparar_imagen(f_user)
+        img_usuario = preparar_foto(f_user)
         st.image(img_usuario, width=150)
 
-# --- 5. GENERACIÓN ---
 st.divider()
 
+# --- PROCESO DE GENERACIÓN ---
 if st.button("🚀 GENERAR PRUEBA AHORA"):
     if not img_prenda or not img_usuario:
-        st.error("⚠️ Cargá ambas imágenes primero.")
+        st.error("Cargá ambas imágenes.")
     else:
-        with st.spinner("Procesando..."):
+        with st.spinner("Procesando prenda..."):
             try:
-                orig_w, orig_h = img_usuario.size
-                
-                prompt = (
-                    "Virtual try-on task. Replace the clothing of the person in the first image "
-                    "with the garment shown in the second image. Maintain the person's face, pose, "
-                    "identity, and the background exactly. Fit the new garment naturally."
-                )
-
-                safety_settings = [
+                # 1. Parámetros de Seguridad Corregidos (Formato SDK nuevo)
+                # Usamos nombres genéricos que el modelo 2.0 Flash acepta sin error
+                safety_config = [
                     types.SafetySetting(category="HATE_SPEECH", threshold="OFF"),
                     types.SafetySetting(category="HARASSMENT", threshold="OFF"),
                     types.SafetySetting(category="SEXUALLY_EXPLICIT", threshold="OFF"),
-                    types.SafetySetting(category="DANGEROUS_CONTENT", threshold="OFF"),
+                    types.SafetySetting(category="DANGEROUS_CONTENT", threshold="OFF")
                 ]
 
+                # 2. Prompt y Generación
+                prompt = "Virtual try-on: replace the shirt in the first image with the garment in the second image. Keep background and person intact."
+                
                 response = client.models.generate_content(
                     model='gemini-2.0-flash',
                     contents=[prompt, img_usuario, img_prenda],
-                    config=types.GenerateContentConfig(
-                        safety_settings=safety_settings
-                    )
+                    config=types.GenerateContentConfig(safety_settings=safety_config)
                 )
 
-                # CORRECCIÓN DE SINTAXIS AQUÍ
-                if response.candidates and len(response.candidates) > 0:
-                    try:
-                        img_data = response.candidates[0].content.parts[0].inline_data.data
-                        resultado = PIL.Image.open(io.BytesIO(img_data))
-                        resultado = resultado.resize((orig_w, orig_h), PIL.Image.Resampling.LANCZOS)
-                        st.success("¡Listo!")
-                        st.image(resultado, use_container_width=True)
-                    except Exception:
-                        st.error("La IA no pudo generar la imagen (filtro de seguridad).")
-                else:
-                    st.error("No se recibió respuesta de la IA.")
+                # 3. Validación de Respuesta Blindada
+                if response.candidates and response.candidates[0].content.parts:
+                    for part in response.candidates[0].content.parts:
+                        if part.inline_data:
+                            resultado = PIL.Image.open(io.BytesIO(part.inline_data.data))
+                            st.success("¡Listo!")
+                            st.image(resultado, use_container_width=True)
+                            st.stop()
+                
+                st.error("La IA no devolvió una imagen. Probá con fotos más claras.")
 
             except Exception as e:
                 st.error(f"Error técnico: {str(e)}")
