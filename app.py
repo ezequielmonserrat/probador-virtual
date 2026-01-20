@@ -7,7 +7,7 @@ import io
 from google import genai
 from google.genai import types
 
-# --- 1. CONFIGURACIÓN VISUAL ---
+# --- 1. CONFIGURACIÓN VISUAL (Fondo oscuro y letras legibles) ---
 st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
 
 st.markdown("""
@@ -16,7 +16,7 @@ st.markdown("""
     label, p, h1, h2, h3, span { color: white !important; }
     .stTextInput input { color: black !important; }
     div.stButton > button {
-        background-color: #0082C9; color: white; width: 100%; font-weight: bold;
+        background-color: #0082C9; color: white; width: 100%; font-weight: bold; border-radius: 8px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -24,45 +24,51 @@ st.markdown("""
 st.title("👕 Probador Virtual Pro")
 
 # --- 2. CONFIGURACIÓN DE API (CLAVE INTEGRADA) ---
-# He vuelto a poner tu clave aquí para que el código funcione directamente
-api_key = "AIzaSyD..." # Aquí va la clave que me pasaste anteriormente
+api_key = "AIzaSyDUxT9QvCQchc_RQ06KuyNC5hiYqZFaJpo"
 client = genai.Client(api_key=api_key)
 
 # --- 3. FUNCIONES DE PROCESAMIENTO ---
 def preparar_imagen(archivo):
-    """Carga y corrige la orientación de las fotos de celular (EXIF)."""
+    """Carga la imagen y corrige la orientación automática de celulares."""
     img = PIL.Image.open(archivo)
     return PIL.ImageOps.exif_transpose(img)
 
 def scrap_solo_deportes(url):
-    """Extrae imagen de Solo Deportes de forma segura."""
+    """Extrae la imagen del link de Solo Deportes."""
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         r = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(r.text, 'html.parser')
         meta = soup.find("meta", property="og:image")
         if meta:
-            img_data = requests.get(meta["content"], headers=headers).content
+            img_url = meta["content"]
+            img_data = requests.get(img_url, headers=headers).content
             return PIL.Image.open(io.BytesIO(img_data))
-    except: return None
+    except:
+        return None
     return None
 
-# --- 4. INTERFAZ ---
+# --- 4. INTERFAZ DE USUARIO ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. La Prenda")
-    metodo = st.radio("Origen:", ["Subir Foto", "Link Solo Deportes"])
+    metodo = st.radio("Origen:", ["Link Solo Deportes", "Subir Foto Manual"])
     img_prenda = None
     if metodo == "Link Solo Deportes":
-        url = st.text_input("Link de la prenda aquí:")
+        url = st.text_input("Pegá el link del producto:")
         if url:
-            img_prenda = scrap_solo_deportes(url)
+            with st.spinner("Obteniendo prenda..."):
+                img_prenda = scrap_solo_deportes(url)
+                if not img_prenda:
+                    st.warning("No se pudo obtener la imagen del link. Intentá subirla manualmente.")
     else:
-        f_prenda = st.file_uploader("Subir foto de la prenda", type=['jpg', 'jpeg', 'png'])
-        if f_prenda: img_prenda = preparar_imagen(f_prenda)
+        f_prenda = st.file_uploader("Subir foto de la ropa", type=['jpg', 'jpeg', 'png'])
+        if f_prenda:
+            img_prenda = preparar_imagen(f_prenda)
     
-    if img_prenda: st.image(img_prenda, width=150, caption="Prenda lista")
+    if img_prenda:
+        st.image(img_prenda, width=150, caption="Prenda lista")
 
 with col2:
     st.subheader("2. Tu Foto")
@@ -75,23 +81,23 @@ with col2:
 # --- 5. GENERACIÓN ---
 st.divider()
 
-if st.button("🚀 GENERAR RESULTADO FINAL"):
+if st.button("🚀 GENERAR PRUEBA AHORA"):
     if not img_prenda or not img_usuario:
-        st.error("Por favor, cargá ambas imágenes.")
+        st.error("⚠️ Debes cargar tanto la prenda como tu foto.")
     else:
-        with st.spinner("Procesando... La IA está cambiando la prenda."):
+        with st.spinner("La IA está trabajando en el cambio de ropa..."):
             try:
-                # Guardamos el tamaño de tu foto original
+                # Guardar dimensiones originales para el redimensionado final
                 orig_w, orig_h = img_usuario.size
                 
+                # Instrucciones para la IA
                 prompt = (
-                    "Photo-realistic clothing swap. Take the exact garment from the second image "
-                    "and place it on the person in the first image. "
-                    "Maintain the person's face, identity, pose, and background exactly the same. "
-                    "Adjust the shirt to the person's body shape naturally."
+                    "Virtual try-on task. Replace the clothing of the person in the first image "
+                    "with the garment shown in the second image. Maintain the person's face, pose, "
+                    "identity, and the background exactly the same. Fit the new garment naturally."
                 )
 
-                # Desactivamos filtros para que no bloquee logos de fútbol
+                # Configuración de seguridad en OFF para evitar bloqueos por marcas/logos
                 safety_settings = [
                     types.SafetySetting(category="HATE_SPEECH", threshold="OFF"),
                     types.SafetySetting(category="HARASSMENT", threshold="OFF"),
@@ -99,25 +105,4 @@ if st.button("🚀 GENERAR RESULTADO FINAL"):
                     types.SafetySetting(category="DANGEROUS_CONTENT", threshold="OFF"),
                 ]
 
-                response = client.models.generate_content(
-                    model='gemini-2.0-flash',
-                    contents=[prompt, img_usuario, img_prenda],
-                    config=types.GenerateContentConfig(
-                        safety_settings=safety_settings
-                    )
-                )
-
-                if response.candidates and response.candidates[0].content.parts:
-                    img_data = response.candidates[0].content.parts[0].inline_data.data
-                    resultado = PIL.Image.open(io.BytesIO(img_data))
-                    
-                    # Forzamos a que el resultado tenga el tamaño de tu foto original
-                    resultado = resultado.resize((orig_w, orig_h), PIL.Image.Resampling.LANCZOS)
-                    
-                    st.success("¡Imagen generada con éxito!")
-                    st.image(resultado, use_container_width=True)
-                else:
-                    st.error("La IA declinó la imagen. Si es una camiseta con muchos logos, probá con una foto más lejana.")
-
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
+                # Ejecución con Gemini 2
