@@ -6,53 +6,52 @@ import PIL.ImageOps
 import io
 from google import genai
 
-# --- 1. IMPORTANTE: EL IMPORT DE ARRIBA DEBE ESTAR PRIMERO ---
-# Configuramos la página inmediatamente después de los imports
-st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
+# --- 1. CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERO) ---
+st.set_page_config(page_title="Probador Virtual Estable", layout="centered")
 
-# CSS para forzar Modo Oscuro y que las letras SIEMPRE se vean
+# CSS para asegurar legibilidad (Fondo Oscuro / Letras Blancas)
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: white; }
-    label, p, h1, h2, h3 { color: white !important; }
+    label, p, h1, h2, h3, span { color: white !important; }
     .stTextInput input { color: black !important; }
+    div.stButton > button {
+        background-color: #0082C9; color: white; width: 100%; font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("👕 Probador Virtual Pro")
-st.write("Versión estable con Gemini 1.5 Pro")
+st.title("👕 Probador Virtual: Versión Estable")
 
 # --- 2. CONFIGURACIÓN API ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
     api_key = st.text_input("Ingresa tu Gemini API Key:", type="password")
     if not api_key:
-        st.info("Por favor, ingresa la API Key para continuar.")
         st.stop()
 
+# Inicializamos el cliente
 client = genai.Client(api_key=api_key)
 
-# --- 3. FUNCIONES DE APOYO ---
+# --- 3. FUNCIONES DE PROCESAMIENTO ---
 
-def preparar_imagen(upload):
-    """Carga y corrige la rotación automática de la imagen."""
-    img = PIL.Image.open(upload)
+def procesar_imagen(file):
+    """Carga la imagen y arregla la rotación de celulares."""
+    img = PIL.Image.open(file)
     return PIL.ImageOps.exif_transpose(img)
 
-def scrap_solo_deportes(url):
-    """Extrae la imagen del link de Solo Deportes de forma segura."""
+def obtener_prenda_url(url):
+    """Extrae imagen de Solo Deportes de forma segura."""
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            meta = soup.find("meta", property="og:image")
-            if meta:
-                img_url = meta["content"]
-                img_data = requests.get(img_url, headers=headers).content
-                return PIL.Image.open(io.BytesIO(img_data))
+        soup = BeautifulSoup(r.text, 'html.parser')
+        meta = soup.find("meta", property="og:image")
+        if meta and meta.get("content"):
+            img_data = requests.get(meta["content"], headers=headers).content
+            return PIL.Image.open(io.BytesIO(img_data))
     except:
-        pass
+        return None
     return None
 
 # --- 4. INTERFAZ ---
@@ -61,68 +60,70 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. La Prenda")
-    tipo_entrada = st.radio("¿Cómo cargarás la ropa?", ["Subir Archivo", "Link de Solo Deportes"])
-    
+    fuente = st.radio("Fuente:", ["Archivo local", "Link Solo Deportes"])
     img_prenda = None
-    if tipo_entrada == "Subir Archivo":
-        f_prenda = st.file_uploader("Foto de la remera", type=['jpg', 'png', 'jpeg'], key="u1")
-        if f_prenda: img_prenda = preparar_imagen(f_prenda)
+    if fuente == "Archivo local":
+        f = st.file_uploader("Subir remera", type=['jpg', 'jpeg', 'png'], key="prenda")
+        if f: img_prenda = procesar_imagen(f)
     else:
         url = st.text_input("Link del producto:")
         if url:
-            img_prenda = scrap_solo_deportes(url)
+            img_prenda = obtener_prenda_url(url)
             if not img_prenda:
-                st.warning("No se pudo obtener la imagen del link. Probá subiendo el archivo manualmente.")
+                st.warning("No se pudo extraer la imagen. Intentá subirla manualmente.")
 
     if img_prenda:
-        st.image(img_prenda, width=150)
+        st.image(img_prenda, width=150, caption="Remera detectada")
 
 with col2:
     st.subheader("2. Tu Foto")
-    f_usuario = st.file_uploader("Tu foto de cuerpo entero", type=['jpg', 'png', 'jpeg'], key="u2")
+    f_user = st.file_uploader("Subir tu foto", type=['jpg', 'jpeg', 'png'], key="usuario")
     img_usuario = None
-    if f_usuario:
-        img_usuario = preparar_imagen(f_usuario)
-        st.image(img_usuario, width=150)
+    if f_user:
+        img_usuario = procesar_imagen(f_user)
+        st.image(img_usuario, width=150, caption="Tu foto lista")
 
-# --- 5. PROCESAMIENTO ---
+# --- 5. GENERACIÓN ---
 
 st.divider()
 
-if st.button("🚀 GENERAR RESULTADO", use_container_width=True):
+if st.button("✨ VER RESULTADO"):
     if not img_prenda or not img_usuario:
-        st.error("Faltan imágenes. Por favor cargá ambas.")
+        st.error("Por favor, cargá ambas imágenes.")
     else:
-        with st.spinner("La IA está analizando las prendas..."):
+        with st.spinner("Generando..."):
             try:
-                # Guardamos dimensiones para evitar deformación
+                # Guardamos tamaño original para evitar deformación
                 w, h = img_usuario.size
                 
+                # Nombre de modelo corregido para evitar el Error 404
+                # 'gemini-1.5-flash' es el más compatible universalmente
+                model_name = "gemini-1.5-flash" 
+                
                 prompt = (
-                    "You are a professional fashion editor. "
-                    "Task: Take the clothing item from the second image and place it on the person in the first image. "
-                    "Instructions: Maintain the exact body pose, face, and background of the first image. "
-                    "Make the new garment fit the body realistically. "
-                    "The final output must be only the edited image."
+                    "Act as a professional fashion photographer. "
+                    "Take the garment from the second image and put it on the person in the first image. "
+                    "Keep the person's pose, face, and background exactly the same. "
+                    "Adjust the garment to fit the body naturally. Output only the image."
                 )
 
-                # USAMOS 1.5 PRO para evitar los bloqueos que vimos antes
                 response = client.models.generate_content(
-                    model='gemini-1.5-pro',
+                    model=model_name,
                     contents=[prompt, img_usuario, img_prenda]
                 )
 
                 if response.candidates and response.candidates[0].content.parts:
                     img_raw = response.candidates[0].content.parts[0].inline_data.data
-                    res_img = PIL.Image.open(io.BytesIO(img_raw))
+                    resultado = PIL.Image.open(io.BytesIO(img_raw))
                     
-                    # CORRECCIÓN DE TAMAÑO FINAL
-                    res_img = res_img.resize((w, h), PIL.Image.Resampling.LANCZOS)
+                    # Forzamos el tamaño original para que NO se vea estirada o rotada
+                    resultado = resultado.resize((w, h), PIL.Image.Resampling.LANCZOS)
                     
-                    st.success("¡Imagen generada!")
-                    st.image(res_img, use_container_width=True)
+                    st.success("¡Listo!")
+                    st.image(resultado, use_container_width=True)
                 else:
-                    st.error("La IA no pudo generar el resultado. Esto pasa a veces con logos de marcas famosas.")
-            
+                    st.error("La IA no devolvió una imagen. Intentá con fotos más claras o sin logos grandes.")
+
             except Exception as e:
-                st.error(f"Error crítico: {str(e)}")
+                st.error(f"Error: {str(e)}")
+                st.info("Nota: Si ves un error 404, es posible que tu API Key no tenga acceso a este modelo específico.")
