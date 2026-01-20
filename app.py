@@ -6,7 +6,7 @@ import PIL.ImageOps
 import io
 from google import genai
 
-# Interfaz Solo Deportes
+# 1. Configuración de Marca Solo Deportes
 st.set_page_config(page_title="Probador Virtual | Solo Deportes", layout="centered")
 
 st.markdown("""
@@ -26,55 +26,59 @@ st.markdown("<h1 style='text-align: center; color: #0082C9;'>👕 PROBADOR VIRTU
 try:
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception:
-    st.error("Error: Revisa tu API KEY.")
+    st.error("Error: Configura tu GEMINI_API_KEY.")
     st.stop()
 
-url_producto = st.text_input("Link del producto:")
-foto_usuario = st.file_uploader("Subí tu foto 📸", type=['jpg', 'png', 'jpeg'])
-
-def hacer_cuadrada(img):
-    """Agrega bordes para que la IA no rote la imagen"""
-    width, height = img.size
-    new_side = max(width, height)
-    result = PIL.Image.new("RGB", (new_side, new_side), (255, 255, 255))
-    offset = ((new_side - width) // 2, (new_side - height) // 2)
-    result.paste(img, offset)
-    return result, offset, (width, height)
+# 2. Entradas
+url_producto = st.text_input("Link del producto de Solo Deportes:")
+foto_usuario = st.file_uploader("Subí tu foto (4:5) 📸", type=['jpg', 'png', 'jpeg'])
 
 if st.button("VER CÓMO ME QUEDA 😎"):
     if url_producto and foto_usuario:
         try:
-            with st.spinner("Procesando con protección de orientación..."):
-                # Scraping
-                res = requests.get(url_producto, headers={'User-Agent': 'Mozilla/5.0'})
+            with st.spinner("Buscando producto y procesando..."):
+                # --- SCRAPING ROBUSTO PARA EVITAR NONETYPE ---
+                res = requests.get(url_producto, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
                 soup = BeautifulSoup(res.text, 'html.parser')
-                img_src = soup.find("meta", property="og:image")['content']
-                img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_src).content))
                 
-                # Pre-procesamiento: La hacemos cuadrada para que la IA no la gire
-                u_img_orig = PIL.ImageOps.exif_transpose(PIL.Image.open(foto_usuario))
-                u_img_sq, offset, size_orig = hacer_cuadrada(u_img_orig)
-
-                # Usamos el modelo que sí funciona en tu cuenta
-                prompt = "Viste a la persona con la prenda de la Imagen 2. Mantén fondo y postura vertical."
-                
-                resultado = client.models.generate_content(
-                    model='gemini-2.0-flash', # Volvemos al modelo estable
-                    contents=[prompt, u_img_sq, img_prenda]
+                # Intentamos varios selectores por si cambia la web
+                img_tag = (
+                    soup.find("meta", property="og:image") or 
+                    soup.find("img", class_="gallery-placeholder__image") or
+                    soup.find("img", {"id": "magnifier-item-0"})
                 )
                 
+                if not img_tag:
+                    st.error("No se pudo obtener la imagen del link. Verifica el enlace.")
+                    st.stop()
+                
+                img_url = img_tag['content'] if img_tag.has_attr('content') else img_tag['src']
+                img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_url).content))
+                
+                # 3. Procesar Usuario
+                u_img = PIL.ImageOps.exif_transpose(PIL.Image.open(foto_usuario))
+                ancho_orig, alto_orig = u_img.size
+
+                # Prompt de fidelidad absoluta
+                prompt = (
+                    "Tarea: Virtual Try-on. Viste a la persona de la Imagen 1 con la prenda de la Imagen 2. "
+                    "Usa exactamente el diseño de la prenda. No cambies la relación de aspecto."
+                )
+                
+                # Usamos el modelo estable que no da 404
+                resultado = client.models.generate_content(
+                    model='gemini-2.0-flash', 
+                    contents=[prompt, u_img, img_prenda]
+                )
+                
+                # 4. Entrega sin deformación
                 for part in resultado.candidates[0].content.parts:
                     if part.inline_data:
-                        gen_img = PIL.Image.open(io.BytesIO(part.inline_data.data))
-                        
-                        # Post-procesamiento: Recortamos los bordes y volvemos a 4:5
-                        # Esto elimina la deformación y el giro
-                        left, top = offset
-                        right, bottom = left + size_orig[0], top + size_orig[1]
-                        final = gen_img.resize(u_img_sq.size).crop((left, top, right, bottom))
-                        
+                        final = PIL.Image.open(io.BytesIO(part.inline_data.data))
+                        # Forzamos que la salida sea igual a la entrada para evitar giros
+                        final = final.resize((ancho_orig, alto_orig), PIL.Image.Resampling.LANCZOS)
                         st.image(final, use_container_width=True)
-                        st.success("¡Orientación y aspecto preservados!")
+                        st.success("¡Prueba completada con éxito!")
                         
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error inesperado: {str(e)}")
