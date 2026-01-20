@@ -24,7 +24,7 @@ st.markdown("""
 st.title("👕 Probador Virtual Pro")
 
 # --- 2. CONFIGURACIÓN DE API (CLAVE INTEGRADA) ---
-api_key = "AIzaSyDUxT9QvCQchc_RQ06KuyNC5hiYqZFaJpo"
+api_key = 
 client = genai.Client(api_key=api_key)
 
 # --- 3. FUNCIONES DE PROCESAMIENTO ---
@@ -106,3 +106,4 @@ if st.button("🚀 GENERAR PRUEBA AHORA"):
                 ]
 
                 # Ejecución con Gemini 2
+
