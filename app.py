@@ -5,25 +5,13 @@ import PIL.Image
 import PIL.ImageOps
 import io
 from google import genai
-from google.genai import types
 
-# --- CONFIGURACIÓN VISUAL ---
+# --- 1. CONFIGURACIÓN VISUAL ---
 st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
-
-st.markdown("""
-    <style>
-    .stApp { background-color: #0E1117; color: white; }
-    label, p, h1, h2, h3, span { color: white !important; }
-    .stTextInput input { color: black !important; }
-    div.stButton > button {
-        background-color: #0082C9; color: white; width: 100%; font-weight: bold; border-radius: 8px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
+st.markdown("<style>.stApp { background-color: #0E1117; color: white; }</style>", unsafe_allow_html=True)
 st.title("👕 Probador Virtual Pro")
 
-# --- CONEXIÓN CON LA API ---
+# --- 2. CONEXIÓN SEGURA ---
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
@@ -32,7 +20,7 @@ else:
 
 client = genai.Client(api_key=api_key)
 
-# --- FUNCIONES ---
+# --- 3. FUNCIONES ---
 def preparar_foto(archivo):
     img = PIL.Image.open(archivo)
     return PIL.ImageOps.exif_transpose(img)
@@ -46,73 +34,66 @@ def scrap_solo_deportes(url):
         if meta:
             img_data = requests.get(meta["content"], headers=headers).content
             return PIL.Image.open(io.BytesIO(img_data))
-    except:
-        return None
+    except: return None
     return None
 
-# --- INTERFAZ ---
+# --- 4. INTERFAZ ---
 col1, col2 = st.columns(2)
-
 with col1:
     st.subheader("1. La Prenda")
-    metodo = st.radio("Origen:", ["Subir Foto Manual", "Link Solo Deportes"])
+    metodo = st.radio("Origen:", ["Subir Manual", "Link Solo Deportes"])
     img_prenda = None
     if metodo == "Link Solo Deportes":
-        url = st.text_input("Pegá el link aquí:")
-        if url:
-            img_prenda = scrap_solo_deportes(url)
+        url = st.text_input("Link:")
+        if url: img_prenda = scrap_solo_deportes(url)
     else:
-        f_prenda = st.file_uploader("Foto de la prenda", type=['jpg', 'jpeg', 'png'])
-        if f_prenda:
-            img_prenda = preparar_foto(f_prenda)
-    if img_prenda:
-        st.image(img_prenda, width=150)
+        f = st.file_uploader("Prenda", type=['jpg', 'png', 'jpeg'])
+        if f: img_prenda = preparar_foto(f)
+    if img_prenda: st.image(img_prenda, width=150)
 
 with col2:
     st.subheader("2. Tu Foto")
-    f_user = st.file_uploader("Tu foto", type=['jpg', 'jpeg', 'png'])
+    f_u = st.file_uploader("Tu foto", type=['jpg', 'png', 'jpeg'])
     img_usuario = None
-    if f_user:
-        img_usuario = preparar_foto(f_user)
+    if f_u:
+        img_usuario = preparar_foto(f_u)
         st.image(img_usuario, width=150)
 
+# --- 5. GENERACIÓN SIMPLIFICADA (SIN FILTROS MANUALES PARA EVITAR ERRORES) ---
 st.divider()
-
-# --- PROCESO DE GENERACIÓN ---
 if st.button("🚀 GENERAR PRUEBA AHORA"):
     if not img_prenda or not img_usuario:
-        st.error("Cargá ambas imágenes.")
+        st.error("Cargá ambas fotos.")
     else:
-        with st.spinner("Procesando prenda..."):
+        with st.spinner("Generando..."):
             try:
-                # 1. Parámetros de Seguridad Corregidos (Formato SDK nuevo)
-                # Usamos nombres genéricos que el modelo 2.0 Flash acepta sin error
-                safety_config = [
-                    types.SafetySetting(category="HATE_SPEECH", threshold="OFF"),
-                    types.SafetySetting(category="HARASSMENT", threshold="OFF"),
-                    types.SafetySetting(category="SEXUALLY_EXPLICIT", threshold="OFF"),
-                    types.SafetySetting(category="DANGEROUS_CONTENT", threshold="OFF")
-                ]
-
-                # 2. Prompt y Generación
-                prompt = "Virtual try-on: replace the shirt in the first image with the garment in the second image. Keep background and person intact."
+                # Prompt optimizado para no disparar alertas de seguridad
+                prompt = (
+                    "Please perform a professional clothing swap. "
+                    "Replace the person's upper garment in the first image with the shirt shown in the second image. "
+                    "Keep the person's identity and background exactly as they are."
+                )
                 
+                # Llamada ultra-simple: sin configuraciones extra que causen 'INVALID_ARGUMENT'
                 response = client.models.generate_content(
                     model='gemini-2.0-flash',
-                    contents=[prompt, img_usuario, img_prenda],
-                    config=types.GenerateContentConfig(safety_settings=safety_config)
+                    contents=[prompt, img_usuario, img_prenda]
                 )
 
-                # 3. Validación de Respuesta Blindada
-                if response.candidates and response.candidates[0].content.parts:
+                if response.text:
+                    # Si la respuesta es texto en lugar de imagen, algo falló
+                    st.warning("La IA devolvió texto. Intentando extraer imagen...")
+                
+                # Intentamos capturar la imagen del primer candidato
+                if response.candidates:
                     for part in response.candidates[0].content.parts:
                         if part.inline_data:
                             resultado = PIL.Image.open(io.BytesIO(part.inline_data.data))
-                            st.success("¡Listo!")
+                            st.success("¡Logrado!")
                             st.image(resultado, use_container_width=True)
                             st.stop()
                 
-                st.error("La IA no devolvió una imagen. Probá con fotos más claras.")
+                st.error("No se pudo generar la imagen. Probá con una foto de la prenda con fondo liso.")
 
             except Exception as e:
                 st.error(f"Error técnico: {str(e)}")
