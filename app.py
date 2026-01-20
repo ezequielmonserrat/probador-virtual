@@ -24,17 +24,15 @@ st.markdown("""
 st.title("👕 Probador Virtual Pro")
 
 # --- 2. CONFIGURACIÓN DE API SEGURA ---
-# Buscamos la clave en los 'Secrets' de Streamlit para que sea privado y seguro
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
-    st.error("⚠️ Configuración de seguridad faltante: GEMINI_API_KEY no encontrada en los Secrets.")
-    st.info("Por favor, agregá la clave en el panel de Streamlit (Settings > Secrets).")
+    st.error("⚠️ Falta la clave GEMINI_API_KEY en los Secrets de Streamlit.")
     st.stop()
 
 client = genai.Client(api_key=api_key)
 
-# --- 3. FUNCIONES DE APOYO ---
+# --- 3. FUNCIONES ---
 def preparar_imagen(archivo):
     img = PIL.Image.open(archivo)
     return PIL.ImageOps.exif_transpose(img)
@@ -86,7 +84,7 @@ if st.button("🚀 GENERAR PRUEBA AHORA"):
     if not img_prenda or not img_usuario:
         st.error("⚠️ Cargá ambas imágenes primero.")
     else:
-        with st.spinner("Procesando con IA segura..."):
+        with st.spinner("Procesando..."):
             try:
                 orig_w, orig_h = img_usuario.size
                 
@@ -111,4 +109,18 @@ if st.button("🚀 GENERAR PRUEBA AHORA"):
                     )
                 )
 
-                if response.candidates and
+                # CORRECCIÓN DE SINTAXIS AQUÍ
+                if response.candidates and len(response.candidates) > 0:
+                    try:
+                        img_data = response.candidates[0].content.parts[0].inline_data.data
+                        resultado = PIL.Image.open(io.BytesIO(img_data))
+                        resultado = resultado.resize((orig_w, orig_h), PIL.Image.Resampling.LANCZOS)
+                        st.success("¡Listo!")
+                        st.image(resultado, use_container_width=True)
+                    except Exception:
+                        st.error("La IA no pudo generar la imagen (filtro de seguridad).")
+                else:
+                    st.error("No se recibió respuesta de la IA.")
+
+            except Exception as e:
+                st.error(f"Error técnico: {str(e)}")
