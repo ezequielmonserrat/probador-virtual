@@ -6,12 +6,10 @@ import PIL.ImageOps
 import io
 from google import genai
 
-# 1. Configuración de Marca Solo Deportes
-st.set_page_config(page_title="Probador Virtual | Solo Deportes", layout="centered")
-
+# 1. Configuración Visual
+st.set_page_config(page_title="Probador Virtual Pro", layout="centered")
 st.markdown("""
     <style>
-    header, #MainMenu, footer {visibility: hidden;}
     .stApp { background-color: #FFFFFF; }
     div.stButton > button:first-child {
         background-color: #0082C9; color: white; border: none; 
@@ -23,62 +21,92 @@ st.markdown("""
 
 st.markdown("<h1 style='text-align: center; color: #0082C9;'>👕 PROBADOR VIRTUAL</h1>", unsafe_allow_html=True)
 
+# 2. Validación de API Key
 try:
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-except Exception:
-    st.error("Error: Configura tu GEMINI_API_KEY.")
+    if "GEMINI_API_KEY" in st.secrets:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    else:
+        st.error("Falta la GEMINI_API_KEY en los Secrets.")
+        st.stop()
+except Exception as e:
+    st.error(f"Error de configuración: {e}")
     st.stop()
 
-# 2. Entradas
-url_producto = st.text_input("Link del producto de Solo Deportes:")
-foto_usuario = st.file_uploader("Subí tu foto (4:5) 📸", type=['jpg', 'png', 'jpeg'])
+# 3. Interfaz de Entrada: Opción Dual (Link o Foto)
+opcion_prenda = st.radio("¿Cómo querés cargar la prenda?", ["Desde Link (Solo Deportes)", "Subir Foto Manualmente"])
+
+img_prenda = None
+
+if opcion_prenda == "Desde Link (Solo Deportes)":
+    url_producto = st.text_input("Pegá el link aquí:")
+else:
+    file_prenda = st.file_uploader("Subí la foto de la camiseta 👕", type=['jpg', 'png', 'jpeg'])
+    if file_prenda:
+        img_prenda = PIL.Image.open(file_prenda)
+
+foto_usuario = st.file_uploader("Subí tu foto (Formato 4:5) 📸", type=['jpg', 'png', 'jpeg'])
 
 if st.button("VER CÓMO ME QUEDA 😎"):
-    if url_producto and foto_usuario:
+    if foto_usuario and (url_producto or img_prenda):
         try:
-            with st.spinner("Buscando producto y procesando..."):
-                # --- SCRAPING ROBUSTO PARA EVITAR NONETYPE ---
-                res = requests.get(url_producto, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-                soup = BeautifulSoup(res.text, 'html.parser')
+            with st.spinner("Procesando imagen con máxima seguridad..."):
                 
-                # Intentamos varios selectores por si cambia la web
-                img_tag = (
-                    soup.find("meta", property="og:image") or 
-                    soup.find("img", class_="gallery-placeholder__image") or
-                    soup.find("img", {"id": "magnifier-item-0"})
-                )
-                
-                if not img_tag:
-                    st.error("No se pudo obtener la imagen del link. Verifica el enlace.")
-                    st.stop()
-                
-                img_url = img_tag['content'] if img_tag.has_attr('content') else img_tag['src']
-                img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_url).content))
-                
-                # 3. Procesar Usuario
+                # A. Obtención de la prenda (Scraping Blindado)
+                if opcion_prenda == "Desde Link (Solo Deportes)" and not img_prenda:
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    res = requests.get(url_producto, headers=headers, timeout=10)
+                    
+                    if res.status_code != 200:
+                        st.error("No se pudo acceder a la página (Bloqueo de seguridad). Usá la opción 'Subir Foto Manualmente'.")
+                        st.stop()
+                        
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    
+                    # Buscamos la etiqueta de forma segura usando .get() para evitar el error NoneType
+                    img_tag = soup.find("meta", property="og:image")
+                    
+                    if img_tag and img_tag.get('content'):
+                        img_url = img_tag.get('content')
+                        img_prenda = PIL.Image.open(io.BytesIO(requests.get(img_url).content))
+                    else:
+                        st.error("No se encontró la imagen en el link automáticamente. Por favor, descargá la foto de la camiseta y subila con la opción 'Subir Foto Manualmente'.")
+                        st.stop()
+
+                # B. Procesamiento de Usuario (Preservación 4:5)
                 u_img = PIL.ImageOps.exif_transpose(PIL.Image.open(foto_usuario))
                 ancho_orig, alto_orig = u_img.size
 
-                # Prompt de fidelidad absoluta
+                # Prompt Específico para evitar rotación
                 prompt = (
-                    "Tarea: Virtual Try-on. Viste a la persona de la Imagen 1 con la prenda de la Imagen 2. "
-                    "Usa exactamente el diseño de la prenda. No cambies la relación de aspecto."
+                    "Realiza un virtual try-on de alta calidad. "
+                    "Viste a la persona con la prenda proporcionada. "
+                    f"IMPORTANTE: Mantén el lienzo de salida idéntico al original ({ancho_orig}x{alto_orig}). "
+                    "No rotes la imagen, mantén la verticalidad del sujeto y el fondo intacto."
                 )
                 
-                # Usamos el modelo estable que no da 404
+                # C. Generación con validación de respuesta
                 resultado = client.models.generate_content(
                     model='gemini-2.0-flash', 
                     contents=[prompt, u_img, img_prenda]
                 )
                 
-                # 4. Entrega sin deformación
-                for part in resultado.candidates[0].content.parts:
-                    if part.inline_data:
-                        final = PIL.Image.open(io.BytesIO(part.inline_data.data))
-                        # Forzamos que la salida sea igual a la entrada para evitar giros
-                        final = final.resize((ancho_orig, alto_orig), PIL.Image.Resampling.LANCZOS)
-                        st.image(final, use_container_width=True)
-                        st.success("¡Prueba completada con éxito!")
+                # Verificamos si la IA devolvió algo válido antes de intentar leerlo
+                if not resultado.candidates or not resultado.candidates[0].content.parts:
+                    st.error("La IA no pudo procesar la imagen (posible filtro de seguridad). Probá con otra foto.")
+                else:
+                    for part in resultado.candidates[0].content.parts:
+                        if part.inline_data:
+                            final = PIL.Image.open(io.BytesIO(part.inline_data.data))
+                            
+                            # Corrección final de tamaño (Fuerza bruta para encajar en 4:5)
+                            final = final.resize((ancho_orig, alto_orig), PIL.Image.Resampling.LANCZOS)
+                            
+                            st.image(final, caption="Resultado Final", use_container_width=True)
+                            st.success("¡Listo! Sin errores y con el tamaño correcto.")
                         
         except Exception as e:
-            st.error(f"Error inesperado: {str(e)}")
+            # Mensaje detallado para saber exactamente qué falló
+            st.error(f"Error técnico detectado: {str(e)}")
+            st.info("Consejo: Si el error persiste, usá la opción 'Subir Foto Manualmente'.")
+    else:
+        st.warning("Por favor cargá ambas fotos para continuar.")
